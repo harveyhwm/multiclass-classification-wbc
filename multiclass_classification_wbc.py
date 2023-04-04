@@ -4,6 +4,7 @@ import seaborn as sns
 import os
 import pickle
 import gc
+import json
 
 from collections import Counter,deque
 
@@ -24,6 +25,18 @@ DATA_PATH = 'data'
 CATEGORIES = ['EOSINOPHIL', 'LYMPHOCYTE', 'MONOCYTE', 'NEUTROPHIL']
 SPLITS = ['train', 'validation', 'test']
 CHANNELS = ['red', 'green', 'blue']
+
+def get_raw_python_from_notebook(notebook,python=None):
+    if python is None: python=notebook
+    with open(notebook+'.ipynb','r') as f:
+        rawpy = json.load(f)
+    rawpy = [[] if c['source'] == [] else c['source'] for c in rawpy['cells'] if c['cell_type']=='code']
+    for r in rawpy:
+        r.extend(['\n','\n'])
+    raw = [l for r in rawpy for l in r]
+    with open(python+'.py', 'w') as f:
+        f.write(''.join(raw))
+get_raw_python_from_notebook('multiclass_classification_wbc')
 
 def get_model_size(m):
     if type(m) is str:
