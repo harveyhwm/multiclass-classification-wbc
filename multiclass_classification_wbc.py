@@ -4,10 +4,8 @@ import seaborn as sns
 import os
 import pickle
 import gc
-import json
-import time
 
-from collections import Counter, deque
+from collections import Counter,deque
 
 from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
@@ -27,20 +25,6 @@ CATEGORIES = ['EOSINOPHIL', 'LYMPHOCYTE', 'MONOCYTE', 'NEUTROPHIL']
 SPLITS = ['train', 'validation', 'test']
 CHANNELS = ['red', 'green', 'blue']
 
-# self-ingestion to get out our python code when regular export fails
-def get_raw_python_from_notebook(notebook,python=None):
-    if python is None: python=notebook
-    with open(notebook+'.ipynb','r') as f:
-        rawpy = json.load(f)
-    rawpy = [[] if c['source'] == [] else c['source'] for c in rawpy['cells'] if c['cell_type']=='code']
-    for r in rawpy:
-        r.extend(['\n','\n'])
-    raw = [l for r in rawpy for l in r]
-    with open(python+'.py', 'w') as f:
-        f.write(''.join(raw))
-get_raw_python_from_notebook('multiclass_classification_wbc')
-
-# this function can be used to estimate the size of a TensorFlow model we want to save :)
 def get_model_size(m):
     if type(m) is str:
         m = tf.keras.models.load_model(m)
@@ -57,7 +41,6 @@ def get_model_size(m):
     print('Estimated Model Size:', np.round(1e-6*weight_byte_heuristic*size,2),'MB')
     #return size,int(weight_byte_heuristic*size)
 
-
 def get_file_counts(data_path=DATA_PATH, splits=SPLITS, categories=CATEGORIES):
     dirs = {}
     for j in splits:
@@ -66,7 +49,6 @@ def get_file_counts(data_path=DATA_PATH, splits=SPLITS, categories=CATEGORIES):
             dirs[j][i] = os.path.join(data_path,j,i)
             print('size of', j, 'directory for', i, ':', len(os.listdir(dirs[j][i])))
         print('TOTAL length of', j, 'set :', sum([len(os.listdir(dirs[j][i])) for i in categories]))
- 
 
 def get_file_paths(data_path=DATA_PATH, splits=SPLITS, categories=CATEGORIES, df=True):
     paths = []
@@ -78,8 +60,6 @@ def get_file_paths(data_path=DATA_PATH, splits=SPLITS, categories=CATEGORIES, df
     if df is True: return pd.DataFrame.from_dict(paths)
     return paths
 
-
-# helper function to extract color channels from images if we wanted to analyze them separartely.  Not used for now....
 def extract_channels(dataset_path, path, categories=CATEGORIES, splits=SPLITS, channels=CHANNELS):
     filepaths = {}
     for s in splits:
@@ -107,23 +87,25 @@ def extract_channels(dataset_path, path, categories=CATEGORIES, splits=SPLITS, c
     for r in ['red','green','blue']:
         try:
             os.mkdir(os.path.join(dataset_path,r))
+            #print('A')
         except:
             pass
         for s in splits:
             try:
                 os.mkdir(os.path.join(dataset_path,r,s))
+                #print('B')
             except:
                 pass
             for c in categories:
                 try:
                     os.mkdir(os.path.join(dataset_path,r,s,c))
+                    #print('C')
                 except:
                     pass
 
     plt.imsave(filepaths[path]['red'], red_dominance, cmap='gray')
     plt.imsave(filepaths[path]['green'], green_dominance, cmap='gray')
     plt.imsave(filepaths[path]['blue'], blue_dominance, cmap='gray')
-    
 
 def calc_performance(model, data, indices=None, names=SPLITS, original_data=None, verbose=False):
     if type(data) != list: data = [data]
@@ -152,11 +134,10 @@ def calc_performance(model, data, indices=None, names=SPLITS, original_data=None
         'confusion_matrix': cm
     }
 
-
 def make_confusion_matrix(d1, d2):
     return pd.DataFrame(confusion_matrix(d1, d2, normalize='true'))
 
-#### REUSEABLE MODEL CALLBACKS:
+#### MODEL CALLBACKS: reuseable
 
 # stop early if no improvement after 5 epochs
 early_stopping = EarlyStopping(
@@ -170,7 +151,7 @@ early_stopping = EarlyStopping(
 checkpoint = ModelCheckpoint(
     'models/classification_wbc1.h5',
     monitor='val_accuracy',
-    verbose=0,
+    verbose=1,
     mode='max', 
     save_best_only=True
 )
@@ -184,31 +165,7 @@ reduce_lr = ReduceLROnPlateau(
     verbose=1
 )
 
-# increase the learning rate by sqrt(10) over the course of training
 lr_scheduler = LearningRateScheduler(lambda epoch: 1e-5 * 10**(1.5*epoch/EPOCHS))
-
-
-# class to print a dot to mark an epoch's completion, instead of verbose metrics
-class PrintDot(tf.keras.callbacks.Callback):
-    def __init__(self, freq):
-        self.freq=freq
-    
-    def on_epoch_end(self, epoch, logs):
-        if epoch%self.freq == 0:
-            print('.', end='')
-        else:
-            print('-', end='')
-        
-# class to print a dot to mark an epoch's completion, instead of verbose metrics
-class PrintEpochNum(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs):
-        print(str(epoch)+' ', end='')
-
-# class to print metrics less frequently
-class PrintMetricsEveryNEpochs(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs):
-        if epoch%5 == 0:
-            print('Epoch '+str(epoch)+'  ', 'Loss:',logs['loss'], 'Accuracy:',logs['accuracy'])
 
 # traverse a set of learning rate values starting from 1e-4, increasing by 10**(epoch/20) every epoch
 # def lr_scheduler(epochs=100, lrs=(1e-5,1e-2)):
@@ -224,23 +181,22 @@ training_datagen = ImageDataGenerator(
 
 test_val_datagen = ImageDataGenerator(rescale = 1.0/255.0)
 
-# helper function to allow us to retain common settings
-def flow_data(generator, split, shuffle=True, size=(128,128), classes=None, class_mode='categorical', batch_size=60):
+def flow_data(generator, data_path, split,shuffle=True, classes=None, class_mode='categorical'):
     return generator.flow_from_directory(
-        os.path.join(DATA_PATH, split),
-        target_size=size,
+        os.path.join(data_path,split),
+        target_size=(128,128),
         classes=classes,
         class_mode=class_mode,
-        batch_size=batch_size,
+        batch_size=60,
         shuffle=shuffle
     )
 
 np.random.seed(67) # use a consistent seed so shuffling gives expected results
-train_data = flow_data(training_datagen, 'train')
-validation_data = flow_data(test_val_datagen, 'validation')
-train_data_unshuffled = flow_data(training_datagen, 'train', shuffle=False)
-validation_data_unshuffled = flow_data(test_val_datagen, 'validation', shuffle=False)
-test_data_unshuffled = flow_data(test_val_datagen, 'test', shuffle=False)
+train_data = flow_data(training_datagen, DATA_PATH, 'train')
+validation_data = flow_data(test_val_datagen, DATA_PATH, 'validation')
+train_data_unshuffled = flow_data(training_datagen, DATA_PATH, 'train', shuffle=False)
+validation_data_unshuffled = flow_data(test_val_datagen, DATA_PATH, 'validation', shuffle=False)
+test_data_unshuffled = flow_data(test_val_datagen, DATA_PATH, 'test', shuffle=False)
 
 model_1 = tf.keras.models.Sequential([
     tf.keras.layers.Conv2D(64, (3,3), activation='relu', input_shape=(128, 128, 3)),
@@ -273,8 +229,8 @@ history1 = model_1.fit(
     train_data,
     epochs = EPOCHS,
     validation_data = validation_data,
-    verbose = 0,
-    callbacks = [reduce_lr, lr_scheduler, checkpoint, PrintDot(1)]
+    verbose = 1,
+    callbacks = [reduce_lr,lr_scheduler,checkpoint]
 )
 # model_1.save('models/classification_wbc1.h5')
 
@@ -303,74 +259,7 @@ accuracy_1
 
 for j in SPLITS:
     print()
-    print(pd.DataFrame(confusion_matrix(true_classes_1[j], classes_1[j], normalize='true')))
-
-train_data_2 = flow_data(training_datagen, 'train', size=(240,240))
-validation_data_2 = flow_data(test_val_datagen, 'validation', size=(240,240))
-train_data_unshuffled_2 = flow_data(training_datagen, 'train', size=(240,240), shuffle=False)
-validation_data_unshuffled_2 = flow_data(test_val_datagen, 'validation', size=(240,240), shuffle=False)
-test_data_unshuffled_2 = flow_data(test_val_datagen, 'test', size=(240,240), shuffle=False)
-
-model_2 = tf.keras.models.Sequential([
-    tf.keras.layers.Conv2D(128, (3,3), activation='relu', input_shape=(240, 240, 3)),
-    tf.keras.layers.MaxPooling2D(2,2),
-    tf.keras.layers.Conv2D(256, (3,3), activation='relu'),
-    tf.keras.layers.MaxPooling2D(2,2),
-    tf.keras.layers.Conv2D(256, (3,3), activation='relu'),
-    tf.keras.layers.MaxPooling2D(2,2),
-    tf.keras.layers.Conv2D(256, (3,3), activation='relu'),
-    tf.keras.layers.MaxPooling2D(2,2),
-    tf.keras.layers.Conv2D(256, (3,3), activation='relu'),
-    tf.keras.layers.MaxPooling2D(2,2),
-    tf.keras.layers.Flatten(),
-    tf.keras.layers.Dense(32, activation='relu'),
-    tf.keras.layers.Dense(4, activation='softmax')
-])
-
-model_2.compile(
-    loss='categorical_crossentropy',
-    optimizer=tf.keras.optimizers.Adam(),
-    metrics=['accuracy']
-)
-
-EPOCHS = 100
-model_path_2 = 'models/classification_wbc240'
-
-checkpoint = ModelCheckpoint(
-    model_path_2+'.h5',
-    monitor='val_accuracy',
-    verbose=1,
-    mode='max',
-    save_best_only=True
-)
-
-model_history = model_2.fit(
-    train_data_2,
-    epochs=EPOCHS,
-    validation_data=validation_data_2,
-    verbose=0,
-    callbacks=[reduce_lr, lr_scheduler, checkpoint, PrintDot(1)]
-)
-
-with open(model_path2+'_history.pickle','wb') as h:
-    pickle.dump(model_history2.history, h, protocol=pickle.HIGHEST_PROTOCOL);
-
-model_2 = tf.keras.models.load_model('models/classification_wbc240.h5')
-
-model_results_2 = calc_performance(model_2, [train_data_unshuffled_2, validation_data_unshuffled_2, test_data_unshuffled_2])
-
-model_results_2['accuracy']
-
-for i in model_results_2['confusion_matrix']:
-    print(model_results_2['confusion_matrix'][i])
-    print()
-
-classes_test_combined_2 = [classes_1['test'][i] if classes_1['test'][i] in [0,2] else model_results_2['classes']['test'][i] for i in range(len(classes_1['test']))]
-combined_accuracy_2 = np.mean([1 if classes_test_combined_2[i]==true_classes_1['test'][i] else 0 for i in range(len(classes_1['test']))])
-
-combined_accuracy_2
-
-print(make_confusion_matrix(test_data_unshuffled_2.classes, classes_test_combined_2))
+    print(pd.DataFrame(confusion_matrix(true_classes_1[j],classes_1[j],normalize='true')))
 
 # flow from directory using only the labels 0, 2 and 3
 
@@ -382,6 +271,12 @@ train_data_unshuffled_4a = flow_data(training_datagen, DATA_PATH, 'train', shuff
 validation_data_unshuffled_4a = flow_data(test_val_datagen, DATA_PATH, 'validation', shuffle=False, classes=categories_4a)
 test_data_unshuffled_4a = flow_data(test_val_datagen,DATA_PATH, 'test', shuffle=False, classes=categories_4a)
 
+# test_grid = pd.DataFrame(np.array([test_data_unshuffled.classes,
+#     test_data_unshuffled.labels,
+#     test_data_unshuffled.filepaths]).transpose(),
+#     columns=['preds','actual','filepath'])
+# test_grid
+
 model_4a = tf.keras.models.Sequential([
     tf.keras.layers.Conv2D(64, (3,3), activation='relu', input_shape=(128, 128, 3)),
     tf.keras.layers.MaxPooling2D(2, 2),
@@ -391,14 +286,14 @@ model_4a = tf.keras.models.Sequential([
     tf.keras.layers.MaxPooling2D(2,2),
     tf.keras.layers.Conv2D(128, (3,3), activation='relu'),
     tf.keras.layers.MaxPooling2D(2,2),
-    tf.keras.layers.Flatten(),
+    tf.keras.layers.Flatten(), # tf.keras.layers.Dropout(0.1),
     tf.keras.layers.Dense(32, activation='relu'),
     tf.keras.layers.Dense(3, activation='softmax')
 ])
 
 model_4a.compile(
     loss='categorical_crossentropy',
-    optimizer=tf.keras.optimizers.Adam(),
+    optimizer=tf.keras.optimizers.Adam(), #'rmsprop',
     metrics=['accuracy']
 )
 
@@ -417,8 +312,8 @@ history_4a = model_4a.fit(
     train_data_4a,
     epochs=EPOCHS,
     validation_data=validation_data_4a,
-    verbose=0,
-    callbacks=[lr_scheduler, reduce_lr, checkpoint, PrintDot(1)]] # early_stopping
+    verbose=1,
+    callbacks=[lr_scheduler,reduce_lr,checkpoint] # early_stopping
 )
 
 model_4a = tf.keras.models.load_model('models/classification_wbc4a_best.h5')
@@ -476,8 +371,8 @@ history_4b = model_4b.fit(
     train_data_4b,
     epochs=EPOCHS,
     validation_data=validation_data_4b,
-    verbose=0,
-    callbacks=[reduce_lr, lr_scheduler, checkpoint, PrintDot(1)]
+    verbose=1,
+    callbacks=[reduce_lr,lr_scheduler,checkpoint]
 )
 
 model_4b = tf.keras.models.load_model('models/classification_wbc4b_best.h5')
@@ -595,6 +490,100 @@ accuracy_5 = np.mean([1 if preds_5[i]==test_data_unshuffled.classes[i] else 0 fo
 accuracy_5
 
 print(make_confusion_matrix(test_data_unshuffled.classes, preds_5))
+
+file_data = get_file_paths()
+
+def flow_df(generator,file_data,shuffle=True):
+    return generator.flow_from_dataframe(
+        file_data,
+        directory=None,
+        x_col='file_path',
+        y_col='classes',
+        target_size=(240,240),
+        classes=None,
+        class_mode='binary',
+        batch_size=60,
+        shuffle=shuffle
+    );
+
+binary_models = []
+
+for c in CATEGORIES[:1]:
+    file_data['classes'] = file_data['category'].apply(lambda x: '0' if x==c else '1')
+    file_data_train = file_data[file_data['split']=='train'].reset_index(drop=True)
+    file_data_validation = file_data[file_data['split']=='validation'].reset_index(drop=True)
+    file_data_test = file_data[file_data['split']=='test'].reset_index(drop=True)
+
+    train_data = flow_df(training_datagen,file_data_train);
+    validation_data = flow_df(test_val_datagen,file_data_validation);
+    train_data_unshuffled = flow_df(training_datagen,file_data_train,shuffle=False);
+    validation_data_unshuffled = flow_df(test_val_datagen,file_data_validation,shuffle=False);
+    test_data_unshuffled = flow_df(test_val_datagen,file_data_test,shuffle=False);
+    break
+    
+    new_model = tf.keras.models.Sequential([
+        tf.keras.layers.Conv2D(128, (3,3), activation='relu', input_shape=(240, 240, 3)),
+        tf.keras.layers.MaxPooling2D(2, 2),
+        tf.keras.layers.Conv2D(128, (3,3), activation='relu'),
+        tf.keras.layers.MaxPooling2D(2,2),
+        tf.keras.layers.Conv2D(128, (3,3), activation='relu'),
+        tf.keras.layers.MaxPooling2D(2,2),
+        tf.keras.layers.Conv2D(128, (3,3), activation='relu'),
+        tf.keras.layers.MaxPooling2D(2,2),
+        tf.keras.layers.Conv2D(128, (3,3), activation='relu'),
+        tf.keras.layers.MaxPooling2D(2,2),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(32, activation='relu'),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+
+    binary_models.append(new_model)
+
+    model_path = 'models/classification_wbc_binary2_'+c+'.h5'
+
+    checkpoint = ModelCheckpoint(
+        model_path,
+        monitor = 'val_accuracy',
+        verbose = 0,
+        mode = 'max', 
+        save_best_only = True
+    )
+
+    EPOCHS = 50
+    lr_scheduler = LearningRateScheduler(lambda epoch: 5e-5 * 10**(2*epoch/EPOCHS))
+    
+    binary_models[-1].compile(loss = 'binary_crossentropy',
+    optimizer = tf.keras.optimizers.Adam(), # 'rmsprop',
+    metrics = ['accuracy'])
+
+    model_history = binary_models[-1].fit(
+        train_data,
+        epochs = EPOCHS,
+        validation_data = validation_data,
+        verbose = 1,
+        callbacks = [lr_scheduler,checkpoint]
+    )
+
+    with open(model_path+'_history.pickle','wb') as h:
+        pickle.dump(model_history.history,h,protocol=pickle.HIGHEST_PROTOCOL);
+
+model_6a = tf.keras.models.load_model('models/classification_wbc_binary2_EOSINOPHIL.h5')
+model_6b = tf.keras.models.load_model('models/classification_wbc_binary2_LYMPHOCYTE.h5')
+model_6c = tf.keras.models.load_model('models/classification_wbc_binary2_MONOCYTE.h5')
+model_6d = tf.keras.models.load_model('models/classification_wbc_binary2_NEUTROPHIL.h5')
+
+preds_6a = model_6a.predict(test_data_unshuffled)
+preds_6b = model_6b.predict(test_data_unshuffled)
+preds_6c = model_6c.predict(test_data_unshuffled)
+preds_6d = model_6d.predict(test_data_unshuffled)
+
+preds_6 = np.concatenate([preds_6a, preds_6b, preds_6c, preds_6d],axis=1)
+preds_6 = [np.argmin(p) for p in preds_6]
+
+combined_accuracy_binary = np.mean([1 if preds_6[i]==test_data_unshuffled_2.classes[i] else 0 for i in range(len(preds_6))])
+combined_accuracy_binary
+
+print(make_confusion_matrix(test_data_unshuffled_2.classes, preds_6))
 
 AUTOTUNE = tf.data.AUTOTUNE
 BATCH_SIZE = 32
@@ -822,7 +811,7 @@ def augment_process(data, path, labels, repeat=1): # we perform augmentation as 
 
 train_data_aug = augment_process(
     train_data_7,
-    os.path.join(DATA_PATH, 'augmented_train'),
+    os.path.join(DATA_PATH,'augmented_train'),
     CATEGORIES,
     repeat=1
 )
@@ -905,7 +894,6 @@ for i in range(4):
         train_data_binary_aug[i],  # augmented training data
         validation_data=val_data_binary[i],  # non-augmented validation data :)
         batch_size=32,
-        verbose=0,
         epochs=EPOCHS,
         callbacks=[lr_scheduler, early_stopping]
     ))
@@ -949,8 +937,7 @@ accuracy_9_8
 print(make_confusion_matrix(true_classes_8, preds_9_8))
 
 tf.math.confusion_matrix(
-    true_classes_8,
-    preds_9_8,
+    true_classes_8, preds_9_8,
     num_classes=4
 )
 
@@ -1219,5 +1206,5 @@ tf.math.confusion_matrix(
     num_classes=4
 )
 
-There are a lot more steps we can take hre
+
 
